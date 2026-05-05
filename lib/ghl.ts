@@ -6,8 +6,9 @@ const BASE_URL = "https://services.leadconnectorhq.com";
 
 // Read env var at call time, not at module load time
 function getHeaders() {
+  const key = (process.env.GHL_API_KEY ?? "").trim();
   return {
-    Authorization: `Bearer ${process.env.GHL_API_KEY}`,
+    Authorization: `Bearer ${key}`,
     Version: "2021-07-28",
     "Content-Type": "application/json",
   };
