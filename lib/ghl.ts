@@ -149,33 +149,51 @@ export async function getAllLocations(): Promise<GHLLocation[]> {
 
 // --- Reviews por location ---
 
-export async function getReviews(locationId: string): Promise<ReviewsData> {
-  const res = await fetch(
-    `${BASE_URL}/reputation/review?locationId=${locationId}&limit=100`,
-    {
-      headers: getHeaders(),
-      next: { revalidate: 1800 },
-    }
-  );
-
-  if (res.status === 422 || res.status === 404) {
-    return { reviews: [], totalReviews: 0, averageRating: 0, hasGMB: false };
-  }
-
-  if (!res.ok) {
-    return { reviews: [], totalReviews: 0, averageRating: 0, hasGMB: false };
-  }
-
-  const data = await res.json();
+function parseReviews(body: string): ReviewsData {
+  const data = JSON.parse(body);
   const reviews: GHLReview[] = data.reviews ?? [];
-
   const totalReviews = reviews.length;
   const averageRating =
     totalReviews > 0
       ? reviews.reduce((sum, r) => sum + (STAR_MAP[r.starRating] ?? r.rating ?? 0), 0) / totalReviews
       : 0;
-
   return { reviews, totalReviews, averageRating, hasGMB: true };
+}
+
+const NO_GMB: ReviewsData = { reviews: [], totalReviews: 0, averageRating: 0, hasGMB: false };
+
+export async function getReviews(locationId: string): Promise<ReviewsData> {
+  const headers = getHeaders();
+
+  // Endpoint 1: /reputation/review?locationId=...
+  const url1 = `${BASE_URL}/reputation/review?locationId=${locationId}&limit=100`;
+  const res1 = await fetch(url1, { headers, cache: "no-store" });
+  const body1 = await res1.text();
+  console.log(`[reviews:ep1] ${res1.status} loc=${locationId} body=${body1.slice(0, 300)}`);
+
+  if (res1.ok) return parseReviews(body1);
+
+  if (res1.status === 404 || res1.status === 422) return NO_GMB;
+
+  if (res1.status === 401 || res1.status === 403) {
+    throw new Error(`[ep1] Sin permisos (${res1.status}). Verifica que GHL_API_KEY tenga scope Reputation. Body: ${body1.slice(0, 300)}`);
+  }
+
+  // Endpoint 2: /locations/{id}/reputation/review
+  const url2 = `${BASE_URL}/locations/${locationId}/reputation/review`;
+  const res2 = await fetch(url2, { headers, cache: "no-store" });
+  const body2 = await res2.text();
+  console.log(`[reviews:ep2] ${res2.status} loc=${locationId} body=${body2.slice(0, 300)}`);
+
+  if (res2.ok) return parseReviews(body2);
+
+  if (res2.status === 404 || res2.status === 422) return NO_GMB;
+
+  if (res2.status === 401 || res2.status === 403) {
+    throw new Error(`[ep2] Sin permisos (${res2.status}). Body: ${body2.slice(0, 300)}`);
+  }
+
+  throw new Error(`[ep1:${res1.status}] ${body1.slice(0, 300)} | [ep2:${res2.status}] ${body2.slice(0, 300)}`);
 }
 
 // --- Analytics helpers ---
