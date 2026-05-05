@@ -3,7 +3,6 @@
 // ============================================================
 
 const GHL_API_KEY = process.env.GHL_API_KEY!;
-const GHL_COMPANY_ID = process.env.GHL_COMPANY_ID!;
 const BASE_URL = "https://services.leadconnectorhq.com";
 
 const HEADERS = {
@@ -65,10 +64,47 @@ export function slugify(name: string): string {
     .replace(/\s+/g, "-");
 }
 
+// ——— Auto-detect companyId from the API key ———
+
+async function detectCompanyId(): Promise<string> {
+  // Strategy 1: /oauth/meta
+  try {
+    const res = await fetch(`${BASE_URL}/oauth/meta`, {
+      headers: HEADERS,
+      next: { revalidate: 86400 },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.companyId) return data.companyId as string;
+    }
+  } catch {
+    // fall through
+  }
+
+  // Strategy 2: first result from /locations/search without companyId
+  try {
+    const res = await fetch(`${BASE_URL}/locations/search?limit=1`, {
+      headers: HEADERS,
+      next: { revalidate: 86400 },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const first = (data.locations ?? [])[0] as Record<string, unknown> | undefined;
+      if (first?.companyId) return first.companyId as string;
+    }
+  } catch {
+    // fall through
+  }
+
+  throw new Error(
+    "No se pudo detectar el companyId automáticamente. Verifica que GHL_API_KEY sea una Agency API Key válida."
+  );
+}
+
 // ——— Agency: fetch ALL locations (con paginación automática) ———
 
 export async function getAllLocations(): Promise<GHLLocation[]> {
-  if (!GHL_COMPANY_ID) throw new Error("GHL_COMPANY_ID not configured");
+  const companyId = await detectCompanyId();
 
   const locations: GHLLocation[] = [];
   let skip = 0;
@@ -76,7 +112,7 @@ export async function getAllLocations(): Promise<GHLLocation[]> {
 
   while (true) {
     const res = await fetch(
-      `${BASE_URL}/locations/search?companyId=${GHL_COMPANY_ID}&limit=${limit}&skip=${skip}`,
+      `${BASE_URL}/locations/search?companyId=${companyId}&limit=${limit}&skip=${skip}`,
       {
         headers: HEADERS,
         next: { revalidate: 3600 },
