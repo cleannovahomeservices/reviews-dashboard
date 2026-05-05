@@ -2,16 +2,18 @@
 // Go High Level API — Agency + Reputation
 // ============================================================
 
-const GHL_API_KEY = process.env.GHL_API_KEY!;
 const BASE_URL = "https://services.leadconnectorhq.com";
 
-const HEADERS = {
-  Authorization: `Bearer ${GHL_API_KEY}`,
-  Version: "2021-07-28",
-  "Content-Type": "application/json",
-};
+// Read env var at call time, not at module load time
+function getHeaders() {
+  return {
+    Authorization: `Bearer ${process.env.GHL_API_KEY}`,
+    Version: "2021-07-28",
+    "Content-Type": "application/json",
+  };
+}
 
-// ——— Types ———
+// --- Types ---
 
 export interface GHLLocation {
   id: string;
@@ -43,7 +45,7 @@ export interface ReviewsData {
   hasGMB: boolean;
 }
 
-// ——— Helpers ———
+// --- Helpers ---
 
 const STAR_MAP: Record<string, number> = {
   ONE: 1, TWO: 2, THREE: 3, FOUR: 4, FIVE: 5,
@@ -58,53 +60,51 @@ export function slugify(name: string): string {
   return name
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/[^a-z0-9\s-]/g, "")
     .trim()
     .replace(/\s+/g, "-");
 }
 
-// ——— Auto-detect companyId from the API key ———
+// --- Auto-detect companyId from the API key ---
 
 async function detectCompanyId(): Promise<string> {
+  const headers = getHeaders();
+
   // Strategy 1: /oauth/meta
-  try {
-    const res = await fetch(`${BASE_URL}/oauth/meta`, {
-      headers: HEADERS,
-      next: { revalidate: 86400 },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      if (data?.companyId) return data.companyId as string;
-    }
-  } catch {
-    // fall through
+  const metaRes = await fetch(`${BASE_URL}/oauth/meta`, {
+    headers,
+    cache: "no-store",
+  });
+  if (metaRes.ok) {
+    const data = await metaRes.json();
+    if (data?.companyId) return data.companyId as string;
   }
 
-  // Strategy 2: first result from /locations/search without companyId
-  try {
-    const res = await fetch(`${BASE_URL}/locations/search?limit=1`, {
-      headers: HEADERS,
-      next: { revalidate: 86400 },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      const first = (data.locations ?? [])[0] as Record<string, unknown> | undefined;
-      if (first?.companyId) return first.companyId as string;
-    }
-  } catch {
-    // fall through
+  // Strategy 2: companyId from the first location
+  const searchRes = await fetch(`${BASE_URL}/locations/search?limit=1`, {
+    headers,
+    cache: "no-store",
+  });
+  if (searchRes.ok) {
+    const data = await searchRes.json();
+    const first = (data.locations ?? [])[0] as Record<string, unknown> | undefined;
+    if (first?.companyId) return first.companyId as string;
+    throw new Error(
+      `GHL respondio OK pero sin companyId en locations. Respuesta: ${JSON.stringify(data).slice(0, 200)}`
+    );
   }
 
   throw new Error(
-    "No se pudo detectar el companyId automáticamente. Verifica que GHL_API_KEY sea una Agency API Key válida."
+    `No se pudo detectar el companyId. /oauth/meta: ${metaRes.status}, /locations/search: ${searchRes.status}. Verifica que GHL_API_KEY sea una Agency API Key valida.`
   );
 }
 
-// ——— Agency: fetch ALL locations (con paginación automática) ———
+// --- Agency: fetch ALL locations (con paginacion automatica) ---
 
 export async function getAllLocations(): Promise<GHLLocation[]> {
   const companyId = await detectCompanyId();
+  const headers = getHeaders();
 
   const locations: GHLLocation[] = [];
   let skip = 0;
@@ -114,7 +114,7 @@ export async function getAllLocations(): Promise<GHLLocation[]> {
     const res = await fetch(
       `${BASE_URL}/locations/search?companyId=${companyId}&limit=${limit}&skip=${skip}`,
       {
-        headers: HEADERS,
+        headers,
         next: { revalidate: 3600 },
       }
     );
@@ -146,13 +146,13 @@ export async function getAllLocations(): Promise<GHLLocation[]> {
   return locations;
 }
 
-// ——— Reviews por location ———
+// --- Reviews por location ---
 
 export async function getReviews(locationId: string): Promise<ReviewsData> {
   const res = await fetch(
     `${BASE_URL}/reputation/review?locationId=${locationId}&limit=100`,
     {
-      headers: HEADERS,
+      headers: getHeaders(),
       next: { revalidate: 1800 },
     }
   );
@@ -177,7 +177,7 @@ export async function getReviews(locationId: string): Promise<ReviewsData> {
   return { reviews, totalReviews, averageRating, hasGMB: true };
 }
 
-// ——— Analytics helpers ———
+// --- Analytics helpers ---
 
 export function getReviewsThisWeek(reviews: GHLReview[]): GHLReview[] {
   const cutoff = new Date();
@@ -198,7 +198,7 @@ export interface DailyCount {
 }
 
 export function getWeeklyBreakdown(reviews: GHLReview[]): DailyCount[] {
-  const labels = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+  const labels = ["Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"];
   return Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() - (6 - i));
