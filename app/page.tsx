@@ -120,7 +120,7 @@ async function ClientCard({ location }: { location: GHLLocation }) {
 }
 
 export default async function HomePage() {
-  let locations = [];
+  let locations: GHLLocation[] = [];
   let error = "";
 
   try {
